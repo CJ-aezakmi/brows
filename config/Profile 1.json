@@ -1,0 +1,14 @@
+{
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "screen_height": 600,
+    "screen_width": 800,
+    "timezone": "Europe/Moscow",
+    "lang": "ru-RU",
+    "proxy": "http://i81oypgq7d-res-country-CA-state-5909050-city-5885383-hold-session-session-6935d73fe73ca:5Ypo02taeeglFFhw@93.190.143.48:9999",
+    "cookies": false,
+    "webgl": true,
+    "vendor": "Google Inc.",
+    "cpu": 8,
+    "ram": 8,
+    "is_touch": false
+}

@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+
+# Playwright
+.playwright/
+
+# Logs
+*.log
+logs/
+
+# Cookies и профили
+cookies/
+profiles/
+user_agents.json
+proxy_cache.json
+
+# Временные файлы
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Compiled exe (будет в releases)
+*.exe
+*.bat
+update.bat
+antic_new.exe
+
+# Временные директории браузера
+antic_browser_*/
