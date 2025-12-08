@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -37,9 +40,11 @@ jobs:
         dir
     
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: dist/antic-windows.zip
+        draft: false
+        prerelease: false
         body: |
           ## 🚀 Antic Browser ${{ github.ref_name }}
           
@@ -57,5 +62,3 @@ jobs:
           - GEO автонастройка под прокси
           - Все необходимые файлы и библиотеки
         generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
