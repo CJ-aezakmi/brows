@@ -972,15 +972,17 @@ def get_proxy_info(ip: str) -> dict:
     city = "UNK"
     timezone = None
     
-    try:
-        with geoip2.database.Reader(CITY_DATABASE_PATH) as reader:
-            response = reader.city(ip)
-            city = response.city.name if response.city.name else "UNK"
-            latitude = response.location.latitude
-            longitude = response.location.longitude
-            timezone = TimezoneFinder().timezone_at(lng=longitude, lat=latitude)
-    except:
-        pass
+    # Пытаемся получить детальную информацию из City database если она есть
+    if os.path.exists(CITY_DATABASE_PATH):
+        try:
+            with geoip2.database.Reader(CITY_DATABASE_PATH) as reader:
+                response = reader.city(ip)
+                city = response.city.name if response.city.name else "UNK"
+                latitude = response.location.latitude
+                longitude = response.location.longitude
+                timezone = TimezoneFinder().timezone_at(lng=longitude, lat=latitude)
+        except:
+            pass
     
     result = {"country_code": country_code, "city": city, "timezone": timezone}
     if latitude is not None and longitude is not None:
