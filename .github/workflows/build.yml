@@ -26,27 +26,36 @@ jobs:
     - name: Build with PyInstaller
       run: |
         echo "Starting PyInstaller build..."
-        pyinstaller --onefile --windowed --name antic --add-data "GeoLite2-Country.mmdb;." --add-data "extensions;extensions" --collect-all flet --hidden-import=playwright --hidden-import=geoip2 --hidden-import=pproxy --noupx antic.py
+        pyinstaller --windowed --name antic --add-data "GeoLite2-Country.mmdb;." --add-data "extensions;extensions" --collect-all flet --hidden-import=playwright --hidden-import=geoip2 --hidden-import=pproxy antic.py
         echo "Build completed!"
-        dir dist
+        dir dist\antic
+    
+    - name: Create ZIP archive
+      run: |
+        cd dist
+        powershell Compress-Archive -Path antic -DestinationPath antic-windows.zip
+        dir
     
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/antic.exe
+        files: dist/antic-windows.zip
         body: |
           ## 🚀 Antic Browser ${{ github.ref_name }}
           
           Автоматическая сборка версии ${{ github.ref_name }}
           
-          ### Скачать:
-          - [antic.exe](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/antic.exe)
+          ### 📥 Установка:
+          1. Скачай [antic-windows.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/antic-windows.zip)
+          2. Распакуй в любую папку
+          3. Запусти `antic.exe`
           
-          ### Что нового:
+          ### ✨ Что включено:
           - Автоматическое обновление
           - Интеграция с CyberYozh и SX.ORG
           - Расширение CyberYozh закреплено
           - GEO автонастройка под прокси
+          - Все необходимые файлы и библиотеки
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
