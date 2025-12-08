@@ -1,0 +1,7 @@
+flet==0.28.3
+playwright==1.56.0
+requests==2.32.5
+geoip2==5.2.0
+pproxy==2.7.9
+PySocks==1.7.1
+timezonefinder==8.1.0
