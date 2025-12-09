@@ -690,6 +690,84 @@ class CyberYozhAPI:
         except Exception as e:
             log_message(f"Ошибка получения магазина CyberYozh: {str(e)}", "ERROR")
             return False, str(e)
+    
+    def get_proxies(self, protocol='http', type_format='full_url'):
+        """Получение списка купленных прокси из истории"""
+        log_message(f"Получаем купленные прокси CyberYozh (protocol={protocol}, format={type_format})")
+        try:
+            response = requests.get(
+                f"{self.base_url}proxies/history/",
+                headers={
+                    'X-Api-Key': self.api_key,
+                    'User-Agent': 'Antic Browser v1.0.0'
+                },
+                timeout=15
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            # Парсим результат
+            proxies_list = result.get('results', []) if isinstance(result, dict) else result
+            
+            # Форматируем прокси в нужный формат с метаданными
+            formatted_proxies = []
+            for proxy in proxies_list:
+                # Проверяем статус и срок действия
+                if proxy.get('system_status') != 'active':
+                    log_message(f"Пропускаем прокси с статусом: {proxy.get('system_status')}")
+                    continue
+                if proxy.get('expired', False):
+                    log_message(f"Пропускаем истекший прокси: {proxy.get('id')}")
+                    continue
+                
+                # Получаем данные подключения
+                login = proxy.get('connection_login')
+                password = proxy.get('connection_password')
+                host = proxy.get('connection_host')
+                port = proxy.get('connection_port')
+                
+                if not all([login, password, host, port]):
+                    log_message(f"Пропускаем прокси с неполными данными: {proxy.get('id')}")
+                    continue
+                
+                # Формируем строку прокси
+                proxy_str = f"{protocol}://{login}:{password}@{host}:{port}"
+                
+                # Определяем реальную геолокацию по IP
+                ip = proxy.get('public_ipaddress', host)
+                country_code = proxy.get('country_code', 'Unknown')
+                city = 'Unknown'
+                
+                # Если API не вернул страну или вернул Unknown, определяем по GeoIP
+                if country_code == 'Unknown' or not country_code:
+                    try:
+                        geo_info = get_proxy_info(ip)
+                        country_code = geo_info.get('country_code', 'UNK')
+                        city = geo_info.get('city', 'Unknown')
+                        log_message(f"Определена геолокация для {ip}: {country_code}, {city}")
+                    except Exception as e:
+                        log_message(f"Не удалось определить геолокацию для {ip}: {str(e)}")
+                        country_code = 'UNK'
+                
+                # Добавляем с метаданными для UI
+                formatted_proxies.append({
+                    'proxy': proxy_str,
+                    'host': host,
+                    'port': port,
+                    'country': country_code,
+                    'city': city,
+                    'type': proxy.get('access_type', 'Unknown'),
+                    'category': proxy.get('category', ''),
+                    'expired_at': proxy.get('access_expires_at', ''),
+                    'ip': ip
+                })
+                log_message(f"Добавлен прокси: {host}:{port} [{country_code}]")
+            
+            log_message(f"Загружено {len(formatted_proxies)} активных прокси CyberYozh")
+            return True, formatted_proxies
+        except Exception as e:
+            log_message(f"Ошибка получения прокси CyberYozh: {str(e)}", "ERROR")
+            return False, str(e)
 
 def translate_cyberyozh_message(msg: str) -> str:
     """Переводит системные ответы CyberYozh в понятные русские сообщения."""
@@ -2531,31 +2609,34 @@ def open_cyberyozh_page(page: ft.Page):
         
         access_type_dropdown = ft.Dropdown(
             label="Тип доступа",
-            value="private",
             width=200,
             border_radius=8,
             content_padding=10,
+            hint_text="Все типы",
             options=[
-                ft.dropdown.Option("private", "Private"),
-                ft.dropdown.Option("shared", "Shared")
+                ft.dropdown.Option("", "Все типы"),
+                ft.dropdown.Option("private", "Приватные"),
+                ft.dropdown.Option("shared", "Общие")
             ]
         )
         
         category_dropdown = ft.Dropdown(
             label="Категория",
-            width=200,
+            width=220,
             border_radius=8,
             content_padding=10,
+            hint_text="Все категории",
             options=[
-                ft.dropdown.Option("residential_static", "Residential Static"),
-                ft.dropdown.Option("residential_rotating", "Residential Rotating"),
-                ft.dropdown.Option("datacenter_dedicated", "Datacenter Dedicated"),
-                ft.dropdown.Option("datacenter_shared", "Datacenter Shared"),
-                ft.dropdown.Option("lte", "LTE")
+                ft.dropdown.Option("", "Все категории"),
+                ft.dropdown.Option("residential_static", "Резидентские Статичные"),
+                ft.dropdown.Option("residential_rotating", "Резидентские Ротация"),
+                ft.dropdown.Option("datacenter_dedicated", "Датацентр Выделенные"),
+                ft.dropdown.Option("datacenter_shared", "Датацентр Общие"),
+                ft.dropdown.Option("lte", "Мобильные (LTE/5G)")
             ]
         )
         
-        shop_list = ft.Column([], scroll=ft.ScrollMode.AUTO, height=300)
+        shop_list = ft.Column([], scroll=ft.ScrollMode.AUTO, height=500, spacing=10)
         
         def search_shop(e):
             """Поиск прокси в магазине"""
@@ -2565,57 +2646,201 @@ def open_cyberyozh_page(page: ft.Page):
             
             def fetch_async():
                 try:
+                    # Фильтруем пустые значения и русский текст (если выбрано "Все...")
+                    country = country_dropdown.value if country_dropdown.value else None
+                    
+                    # Проверяем тип доступа
+                    access = None
+                    if access_type_dropdown.value:
+                        val = access_type_dropdown.value
+                        if val not in ["", "Все типы"] and not val.startswith("Все"):
+                            access = val
+                    
+                    # Проверяем категорию
+                    cat = None
+                    if category_dropdown.value:
+                        val = category_dropdown.value
+                        if val not in ["", "Все категории"] and not val.startswith("Все"):
+                            cat = val
+                    
+                    log_message(f"Фильтры: country={country}, access={access}, category={cat}")
+                    
                     success, proxies = cyberyozh_api.get_shop_proxies(
-                        country_code=country_dropdown.value,
-                        access_type=access_type_dropdown.value,
-                        category=category_dropdown.value
+                        country_code=country,
+                        access_type=access,
+                        category=cat
                     )
                     
                     if success:
                         shop_list.controls.clear()
-                        # API returns groups (ProxyShop) with 'proxy_products' array; flatten into product list
-                        products = []
-                        for grp in proxies:
+                        
+                        # Группируем продукты по группам (как на скриншоте)
+                        for grp in proxies[:30]:  # Показываем первые 30 групп
                             grp_products = grp.get('proxy_products') or []
-                            for p in grp_products:
-                                p_copy = dict(p)
-                                p_copy['group_title'] = grp.get('title')
-                                p_copy['country_code'] = grp.get('location_country_code')
-                                p_copy['proxy_category'] = grp.get('proxy_category') or p.get('proxy_category')
-                                products.append(p_copy)
-
-                        for item in products[:30]:  # Показываем первые 30 товаров
-                            proxy_id = item.get('id', 'N/A')
-                            price = item.get('price_usd') or item.get('price') or 'N/A'
-                            category = item.get('proxy_category') or item.get('category') or 'N/A'
-                            # Срок хранения/абонпериод явно не указан в схеме, используем title как подсказку
-                            term_hint = item.get('title') or item.get('group_title') or ''
-
-                            shop_list.controls.append(
-                                ft.Card(
-                                    content=ft.Container(
-                                        content=ft.Row([
-                                            ft.Column([
-                                                ft.Text(f"Тип: {category}", size=12, weight=ft.FontWeight.W_600),
-                                                ft.Text(f"Срок: {term_hint}", size=11, color=ft.Colors.GREY_700),
-                                                ft.Text(f"Цена: ${price}", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN)
-                                            ], spacing=4, expand=True),
-                                            ft.ElevatedButton(
-                                                "Купить",
-                                                bgcolor=ft.Colors.ORANGE,
-                                                color=ft.Colors.WHITE,
-                                                on_click=lambda e, pid=proxy_id: buy_proxy(pid)
-                                            )
-                                        ], spacing=10),
-                                        padding=10
-                                    )
+                            if not grp_products:
+                                continue
+                            
+                            title = grp.get('title', 'Unknown Proxy')
+                            country_code = grp.get('location_country_code', 'UNK')
+                            proxy_category = grp.get('proxy_category', 'Unknown')
+                            
+                            # Словарь для хранения выбранного срока для каждой группы
+                            selected_product = {}
+                            
+                            # Форматируем категорию
+                            category_badges = []
+                            if 'residential' in proxy_category.lower():
+                                category_badges.append(ft.Container(
+                                    content=ft.Text("Резидентские", size=10, color=ft.Colors.WHITE),
+                                    bgcolor=ft.Colors.TEAL_700,
+                                    padding=ft.padding.symmetric(horizontal=6, vertical=3),
+                                    border_radius=3
+                                ))
+                            if 'mobile' in proxy_category.lower() or 'lte' in proxy_category.lower() or '5g' in title.lower() or '4g' in title.lower():
+                                category_badges.append(ft.Container(
+                                    content=ft.Text("Мобильные", size=10, color=ft.Colors.WHITE),
+                                    bgcolor=ft.Colors.PURPLE_700,
+                                    padding=ft.padding.symmetric(horizontal=6, vertical=3),
+                                    border_radius=3
+                                ))
+                            if 'datacenter' in proxy_category.lower():
+                                category_badges.append(ft.Container(
+                                    content=ft.Text("Датацентр", size=10, color=ft.Colors.WHITE),
+                                    bgcolor=ft.Colors.INDIGO_700,
+                                    padding=ft.padding.symmetric(horizontal=6, vertical=3),
+                                    border_radius=3
+                                ))
+                            
+                            if not category_badges:
+                                category_badges.append(ft.Container(
+                                    content=ft.Text("Общие", size=10, color=ft.Colors.WHITE),
+                                    bgcolor=ft.Colors.GREY_700,
+                                    padding=ft.padding.symmetric(horizontal=6, vertical=3),
+                                    border_radius=3
+                                ))
+                            
+                            # Опции для dropdown (разные сроки аренды)
+                            duration_options = []
+                            for prod in grp_products:
+                                days = prod.get('days', 0)
+                                price = prod.get('price_usd', 0)
+                                traffic = prod.get('traffic_limitation', -1)
+                                stock = prod.get('stock_status', 'unknown')
+                                prod_id = prod.get('id')
+                                
+                                if stock == 'out_of_stock':
+                                    continue  # Пропускаем товары не в наличии
+                                
+                                # Форматируем срок
+                                if days == 1:
+                                    term_text = "1 День"
+                                elif days < 30:
+                                    term_text = f"{days} Дней"
+                                elif days == 30:
+                                    term_text = "1 Месяц"
+                                elif days == 90:
+                                    term_text = "3 Месяца"
+                                else:
+                                    term_text = f"{days} дн"
+                                
+                                # Форматируем трафик
+                                if traffic == -1:
+                                    traffic_text = "∞"
+                                elif traffic >= 1024:
+                                    traffic_text = f"{traffic // 1024} GB"
+                                else:
+                                    traffic_text = f"{traffic} MB"
+                                
+                                label = f"{term_text} / {traffic_text} GB / ${price}"
+                                duration_options.append(ft.dropdown.Option(
+                                    key=prod_id,
+                                    text=label
+                                ))
+                                
+                                if not selected_product:
+                                    selected_product['id'] = prod_id
+                                    selected_product['price'] = price
+                            
+                            if not duration_options:
+                                continue  # Нет доступных вариантов
+                            
+                            # Dropdown для выбора срока
+                            duration_dropdown = ft.Dropdown(
+                                options=duration_options,
+                                value=duration_options[0].key if duration_options else None,
+                                width=300,
+                                text_size=12,
+                                content_padding=8,
+                                border_radius=8,
+                                dense=True
+                            )
+                            
+                            def make_buy_handler(dropdown, grp_title):
+                                def handler(e):
+                                    prod_id = dropdown.value
+                                    if prod_id:
+                                        buy_proxy(prod_id)
+                                return handler
+                            
+                            # Карточка прокси (как на скриншоте)
+                            card = ft.Container(
+                                content=ft.Column([
+                                    # Заголовок с флагом и названием
+                                    ft.Row([
+                                        ft.Container(
+                                            content=ft.Text(
+                                                country_code.split(',')[0] if ',' in country_code else country_code,
+                                                size=13,
+                                                weight=ft.FontWeight.BOLD,
+                                                color=ft.Colors.WHITE
+                                            ),
+                                            bgcolor=ft.Colors.BLUE_700,
+                                            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                            border_radius=4
+                                        ),
+                                        ft.Text(
+                                            title,
+                                            size=14,
+                                            weight=ft.FontWeight.W_600,
+                                            color=ft.Colors.BLACK87,
+                                            expand=True
+                                        ),
+                                    ], spacing=10),
+                                    ft.Container(height=5),
+                                    # Бейджи категорий
+                                    ft.Row(category_badges, spacing=5),
+                                    ft.Container(height=10),
+                                    # Dropdown и кнопка покупки
+                                    ft.Row([
+                                        duration_dropdown,
+                                        ft.ElevatedButton(
+                                            "Купить",
+                                            bgcolor=ft.Colors.GREEN_600,
+                                            color=ft.Colors.WHITE,
+                                            height=50,
+                                            on_click=make_buy_handler(duration_dropdown, title)
+                                        )
+                                    ], spacing=10, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                ], spacing=5),
+                                padding=15,
+                                border_radius=12,
+                                bgcolor=ft.Colors.WHITE,
+                                border=ft.border.all(1, ft.Colors.GREY_300),
+                                shadow=ft.BoxShadow(
+                                    spread_radius=1,
+                                    blur_radius=5,
+                                    color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK),
+                                    offset=ft.Offset(0, 2)
                                 )
                             )
+                            
+                            shop_list.controls.append(card)
                         
-                        show_snackbar(page, f"Найдено {len(proxies)} прокси!", ft.Colors.GREEN)
+                        show_snackbar(page, f"Найдено {len(shop_list.controls)} прокси!", ft.Colors.GREEN)
                     else:
                         show_snackbar(page, f"Ошибка: {proxies}", ft.Colors.RED)
                 except Exception as ex:
+                    log_message(f"Ошибка поиска в магазине: {str(ex)}", "ERROR")
                     show_snackbar(page, f"Ошибка поиска: {str(ex)}", ft.Colors.RED)
                 finally:
                     e.control.disabled = False
@@ -2649,26 +2874,46 @@ def open_cyberyozh_page(page: ft.Page):
         interface_container.content = ft.Container(
             padding=20,
             content=ft.Column([
-                ft.Text("Магазин прокси CyberYozh", size=18, weight=ft.FontWeight.BOLD),
-                ft.Container(height=15),
-                ft.Row([country_dropdown, access_type_dropdown, category_dropdown], spacing=15),
-                ft.Container(height=10),
-                ft.ElevatedButton(
-                    "Искать в магазине",
-                    bgcolor=ft.Colors.BLUE,
-                    color=ft.Colors.WHITE,
-                    on_click=search_shop
+                ft.Row([
+                    ft.Text("Магазин прокси CyberYozh", size=20, weight=ft.FontWeight.BOLD, expand=True),
+                    balance_text
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(height=20, color=ft.Colors.GREY_300),
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Фильтры поиска", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.GREY_700),
+                        ft.Container(height=10),
+                        ft.Row([country_dropdown, access_type_dropdown, category_dropdown], spacing=15, wrap=True),
+                        ft.Container(height=10),
+                        ft.ElevatedButton(
+                            "🔍 Искать в магазине",
+                            bgcolor=ft.Colors.BLUE_600,
+                            color=ft.Colors.WHITE,
+                            height=45,
+                            style=ft.ButtonStyle(
+                                padding=ft.padding.symmetric(horizontal=30),
+                                shape=ft.RoundedRectangleBorder(radius=8)
+                            ),
+                            on_click=search_shop
+                        ),
+                    ], spacing=0),
+                    bgcolor=ft.Colors.GREY_50,
+                    padding=15,
+                    border_radius=10,
+                    border=ft.border.all(1, ft.Colors.GREY_200)
                 ),
-                ft.Container(height=15),
+                ft.Container(height=10),
+                ft.Text("Доступные прокси", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.GREY_700),
+                ft.Container(height=5),
                 shop_list,
                 ft.Container(height=20),
                 ft.ElevatedButton(
-                    "Назад",
-                    bgcolor=ft.Colors.GREY,
+                    "← Назад",
+                    bgcolor=ft.Colors.GREY_400,
                     color=ft.Colors.WHITE,
                     on_click=lambda e: hide_interface()
                 )
-            ], spacing=10, scroll=ft.ScrollMode.AUTO)
+            ], spacing=5, scroll=ft.ScrollMode.AUTO)
         )
         
         interface_container.visible = True
@@ -2734,32 +2979,77 @@ def open_cyberyozh_page(page: ft.Page):
                             )
                         )
                     else:
-                        # proxies_data сейчас список строк. Запросим историю для метаданных.
-                        hist_ok, hist = cyberyozh_api.get_proxies(protocol="http", type_format="full_url")
-                        meta_list = hist if hist_ok else []
-                        
-                        for idx, proxy_str in enumerate(proxies_data):
+                        # proxies_data теперь список словарей с метаданными
+                        for idx, proxy_data in enumerate(proxies_data):
                             try:
                                 proxy_id = f"proxy_{idx}"
-                                # Найдем метаданные по ip/host
-                                host_port = proxy_str.split('@')[-1] if '@' in proxy_str else proxy_str.split('://')[-1]
-                                host = host_port.split(':')[0]
-                                meta_item = None
-                                for m in meta_list:
-                                    if isinstance(m, str):
-                                        continue
-                                    if m.get('connection_host') == host or m.get('public_ipaddress') == host:
-                                        meta_item = m
-                                        break
-                                cc, isp, tz, ip = _format_geo(meta_item or {})
-                                proto = proxy_str.split('://')[0]
-                                title = ft.Text(f"{proto}://{host_port}", size=14, color=ft.Colors.BLUE)
+                                proxy_str = proxy_data['proxy']
+                                country = proxy_data.get('country', 'UNK').upper()
+                                city = proxy_data.get('city', 'Unknown')
+                                proxy_type = proxy_data.get('type', 'Unknown').upper()
+                                category = proxy_data.get('category', '')
+                                ip = proxy_data.get('ip', proxy_data['host'])
+                                host = proxy_data['host']
+                                port = proxy_data['port']
+                                
+                                # Определяем протокол из строки прокси
+                                proto = proxy_str.split('://')[0].upper()
+                                
+                                # Форматируем тип прокси
+                                type_display = f"{proxy_type}"
+                                if category:
+                                    type_display += f" ({category})"
+                                
+                                # Форматируем геолокацию: страна + город
+                                geo_display = country
+                                if city and city != 'Unknown' and city != 'UNK':
+                                    geo_display = f"{country}, {city}"
+                                
+                                # Заголовок: ГЕО с флагом + IP:PORT
+                                title = ft.Row([
+                                    ft.Container(
+                                        content=ft.Text(
+                                            geo_display,
+                                            size=12,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=ft.Colors.WHITE
+                                        ),
+                                        bgcolor=ft.Colors.BLUE_700,
+                                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                        border_radius=4
+                                    ),
+                                    ft.Text(
+                                        f"{ip}:{port}",
+                                        size=14,
+                                        weight=ft.FontWeight.W_500,
+                                        color=ft.Colors.BLACK87
+                                    ),
+                                ], spacing=8)
+                                
+                                # Подзаголовок: тип и протокол
                                 subtitle = ft.Row([
-                                    _status_badge(meta_item or {}),
-                                    ft.Text(f" {ip}", size=12, color=ft.Colors.BLACK87),
-                                    ft.Text(f"  {cc}", size=12, color=ft.Colors.BLACK54),
-                                    ft.Text(f"  {tz}", size=12, color=ft.Colors.BLACK38)
-                                ], spacing=8, alignment=ft.MainAxisAlignment.START)
+                                    ft.Container(
+                                        content=ft.Text(
+                                            proto,
+                                            size=11,
+                                            color=ft.Colors.WHITE,
+                                            weight=ft.FontWeight.BOLD
+                                        ),
+                                        bgcolor=ft.Colors.GREEN_700,
+                                        padding=ft.padding.symmetric(horizontal=6, vertical=2),
+                                        border_radius=3
+                                    ),
+                                    ft.Container(
+                                        content=ft.Text(
+                                            type_display,
+                                            size=11,
+                                            color=ft.Colors.WHITE
+                                        ),
+                                        bgcolor=ft.Colors.ORANGE_700,
+                                        padding=ft.padding.symmetric(horizontal=6, vertical=2),
+                                        border_radius=3
+                                    ),
+                                ], spacing=6)
 
                                 def make_toggle_handler(pid, pstr):
                                     def handler(e):
@@ -2779,7 +3069,7 @@ def open_cyberyozh_page(page: ft.Page):
                                     padding=12,
                                     border_radius=10,
                                     bgcolor=ft.Colors.GREY_50,
-                                    border=ft.border.all(1, ft.Colors.GREY_200)
+                                    border=ft.border.all(1, ft.Colors.GREY_300)
                                 )
 
                                 import_list.controls.append(row)
